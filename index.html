@@ -217,6 +217,11 @@ a{color:var(--cobalt);}
 .chip.due{color:var(--red);border-color:var(--red);background:var(--red-t);}
 .chip.due.soon{color:var(--amber);border-color:var(--amber);background:var(--amber-t);}
 .chip.mail{color:var(--dim);}
+.chip.fill{color:var(--amber);border-color:var(--amber);background:var(--amber-t);}
+.chip.nodata{color:var(--dim);border-style:dashed;cursor:pointer;}
+.chip.nodata:hover{color:var(--amber);border-color:var(--amber);}
+.chk{display:flex;align-items:center;gap:6px;font-family:var(--leg);font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);cursor:pointer;}
+.chk input{width:15px;height:15px;accent-color:var(--red);}
 .chip.who{background:var(--ink);border-color:var(--ink);color:var(--panel);cursor:pointer;font-family:var(--ui);text-transform:none;letter-spacing:0;font-size:11.5px;border-radius:999px;}
 .chip.who:hover{background:var(--red);border-color:var(--red);color:#fff;}
 .chip.ref{border-radius:999px;border-color:var(--cobalt);color:var(--cobalt);background:var(--cobalt-t);text-decoration:none;cursor:pointer;font-family:var(--ui);text-transform:none;letter-spacing:0;font-size:11.5px;}
@@ -360,6 +365,7 @@ table.plan tr.today td.d{color:var(--petrol);}
       <select id="nDom" aria-label="Dominio"></select>
       <input type="text" id="nWho" placeholder="¿quién lo espera? (opcional)" list="peoplenames" aria-label="Persona que lo espera">
       <input type="date" id="nDue" aria-label="Fecha límite">
+      <label class="chk" title="una tarea programada busca en tu correo y calendario y rellena los datos que falten"><input type="checkbox" id="nFill"> completar con mi correo</label>
       <button class="btn primary" id="nAdd">Agregar</button>
     </div>
     <div class="toolbar">
@@ -504,26 +510,24 @@ function isRetryable(e){ return !!(e && (e.retryable || e.code==="server_unavail
 function unesc(l){ return l.replace(/^\\([=\-])/, "$1"); }
 
 function parseItem(raw){
-  var t = raw, o = {};
-  o.added   = (t.match(/\bAdded\s+(\d{4}-\d{2}-\d{2})/)||[])[1] || null;
-  o.touched = (t.match(/\bTouched\s+(\d{4}-\d{2}-\d{2})/)||[])[1] || null;
-  o.due     = (t.match(/\bFecha l[íi]mite:\s*(\d{4}-\d{2}-\d{2})/)||[])[1] || null;
-  o.mail    = /\bFuente:\s*mail/i.test(t);
-  var conm  = t.match(/\bCon:\s*([^.]+)\.?/);
-  o.who     = conm ? conm[1].trim() : null;
-  var refm  = t.match(/\bRef:\s*([^.]+(?:\.[^\s][^.]*)*)\.?/);
-  o.ref     = refm ? refm[1].trim() : null;
-  o.stalled = /\bSTALLED\b/i.test(t);
-  t = t.replace(/\s*\bAdded\s+\d{4}-\d{2}-\d{2}\.?/g,"")
-       .replace(/\s*\bTouched\s+\d{4}-\d{2}-\d{2}\.?/g,"")
-       .replace(/\s*\bFecha l[íi]mite:\s*\d{4}-\d{2}-\d{2}\.?/gi,"")
-       .replace(/\s*\bFuente:\s*mail\.?/gi,"")
-       .replace(/\s*\bCon:\s*[^.]+\.?/g,"")
-       .replace(/\s*\bRef:\s*[^.]+(?:\.[^\s][^.]*)*\.?/g,"")
-       .replace(/^\s*STALLED\s*[—-]\s*/i,"")
-       .trim();
-  o.text = t;
-  o.id = Math.random().toString(36).slice(2);
+  var o={id:Math.random().toString(36).slice(2)};
+  // separa por marcadores de campo conocidos, no por puntos: así "Dra. Ríos" sobrevive
+  var parts = String(raw).split(/\s+(?=(?:Con:|Fecha l[íi]mite:|Added\s|Touched\s|Ref:|Fuente:|Completar:))/);
+  var desc = parts.shift() || "";
+  parts.forEach(function(seg){
+    var m;
+    if((m=seg.match(/^Con:\s*(.*?)\.?\s*$/i)))                        o.who=m[1].trim()||null;
+    else if((m=seg.match(/^Fecha l[íi]mite:\s*(\d{4}-\d{2}-\d{2})/i))) o.due=m[1];
+    else if((m=seg.match(/^Added\s+(\d{4}-\d{2}-\d{2})/i)))            o.added=m[1];
+    else if((m=seg.match(/^Touched\s+(\d{4}-\d{2}-\d{2})/i)))          o.touched=m[1];
+    else if((m=seg.match(/^Ref:\s*(.*?)\.?\s*$/i)))                    o.ref=m[1].trim()||null;
+    else if(/^Fuente:\s*mail/i.test(seg))                              o.mail=true;
+    else if((m=seg.match(/^Completar:\s*(pendiente|sin datos)/i)))      o.fill=m[1].toLowerCase();
+  });
+  o.stalled = /\bSTALLED\b/i.test(desc);
+  o.text    = desc.replace(/^\s*STALLED\s*[—-]\s*/i,"").trim();
+  o.added=o.added||null; o.touched=o.touched||null; o.due=o.due||null;
+  o.who=o.who||null; o.ref=o.ref||null; o.mail=!!o.mail; o.fill=o.fill||null;
   return o;
 }
 function itemLine(o){
@@ -535,6 +539,7 @@ function itemLine(o){
   if(o.touched) l += " Touched "+o.touched+".";
   if(o.ref) l += " Ref: "+o.ref+".";
   if(o.mail) l += " Fuente: mail.";
+  if(o.fill) l += " Completar: "+o.fill+".";
   return l;
 }
 function sepIndexes(lines){ var a=[]; lines.forEach(function(l,i){ if(/^={10,}\s*$/.test(l.trim())) a.push(i); }); return a; }
@@ -1027,6 +1032,13 @@ function renderItem(d,sb,it){
       chips.appendChild(c);
     }
     if(it.stalled) chips.appendChild(el("span","chip stale","estancado"));
+    if(it.fill==="pendiente") chips.appendChild(el("span","chip fill","⏳ buscando en tu correo"));
+    if(it.fill==="sin datos"){
+      var sd=el("button","chip nodata","sin datos — reintentar"); sd.type="button";
+      sd.title="volver a pedir que lo complete con tu correo y calendario";
+      sd.onclick=function(){ it.fill="pendiente"; markDirty(); paintChips(); };
+      chips.appendChild(sd);
+    }
     chips.style.display = chips.children.length ? "flex" : "none";
   }
   paintChips();
@@ -1052,6 +1064,14 @@ function renderItem(d,sb,it){
   det.appendChild(field("Proyecto", it.ref, "nombre o URL", function(v){
     if(v!==it.ref){ it.ref=v; markDirty(); paintChips(); }
   }, "projnames"));
+  var fillBtn=el("button","btn sm", it.fill==="pendiente" ? "Completando…" : "Completar con mi correo");
+  fillBtn.title="una tarea programada busca en tu correo y calendario y rellena persona, fecha y contexto";
+  fillBtn.onclick=function(){
+    it.fill = it.fill==="pendiente" ? null : "pendiente";
+    fillBtn.textContent = it.fill==="pendiente" ? "Completando…" : "Completar con mi correo";
+    markDirty(); paintChips();
+  };
+  det.appendChild(fillBtn);
   var del=el("button","btn sm","Descartar");
   del.onclick=function(){ var arr=d.subs[sb]; arr.splice(arr.indexOf(it),1); markDirty(); renderAll(); };
   det.appendChild(del);
@@ -1290,8 +1310,10 @@ function fillDomainSelect(){
   var sel=$("#nDom"); if(!sel || sel.options.length===S.domains.length) return;
   sel.innerHTML="";
   S.domains.forEach(function(d,i){ var o=el("option",null,shortDomain(d.name)); o.value=i; sel.appendChild(o); });
-  var last=null; try{ last=localStorage.getItem("lifehack.lastdom"); }catch(e){}
+  var last=null, f=null;
+  try{ last=localStorage.getItem("lifehack.lastdom"); f=localStorage.getItem("lifehack.fill"); }catch(e){}
   if(last!==null && S.domains[last]) sel.value=last;
+  if(f==="1") $("#nFill").checked=true;
 }
 function addTask(){
   var txt=$("#nTxt").value.trim();
@@ -1303,8 +1325,10 @@ function addTask(){
   if(who) line+=" Con: "+who+".";
   if(due) line+=" Fecha límite: "+due+".";
   line+=" Added "+today()+".";
+  if($("#nFill").checked) line+=" Completar: pendiente.";
   S.domains[di].subs["IMMEDIATE"].push(parseItem(line));
-  try{ localStorage.setItem("lifehack.lastdom", String(di)); }catch(e){}
+  try{ localStorage.setItem("lifehack.lastdom", String(di));
+       localStorage.setItem("lifehack.fill", $("#nFill").checked?"1":"0"); }catch(e){}
   $("#nTxt").value=""; $("#nWho").value=""; $("#nDue").value="";
   S.view="todo"; S.filter=""; $("#filter").value="";
   $$(".seg button").forEach(function(x){ x.classList.toggle("on", x.dataset.view==="todo"); });
